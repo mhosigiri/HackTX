@@ -25,6 +25,22 @@ class Person(BaseModel):
     is_living: bool = True
 
 
+class Relationship(BaseModel):
+    """Directed edge: `a` is the `kind` of `b` (a parent of b, a spouse of b, a sibling of b)."""
+
+    a: UUID
+    b: UUID
+    kind: str
+
+
+class FamilyTree(BaseModel):
+    people: list[Person]
+    relationships: list[Relationship]
+    me: UUID | None = None
+    # People with a Tell Me More account, as opposed to relatives only added by name.
+    member_person_ids: list[UUID]
+
+
 class CreateFamily(BaseModel):
     name: str
     your_name: str
@@ -112,6 +128,30 @@ async def list_people(family_id: UUID, user: CurrentUser) -> list[Person]:
             family_id,
         )
     return [Person(**r) for r in rows]
+
+
+@router.get("/families/{family_id}/tree")
+async def get_tree(family_id: UUID, user: CurrentUser) -> FamilyTree:
+    async with pool().acquire() as conn:
+        me = await require_member(conn, user, family_id)
+        people = await conn.fetch(
+            "select id, family_id, display_name, relation_label, birth_year, is_living "
+            "from person where family_id = $1 order by created_at",
+            family_id,
+        )
+        edges = await conn.fetch(
+            "select a, b, kind from relationship where family_id = $1", family_id
+        )
+        members = await conn.fetch(
+            "select person_id from member where family_id = $1 and person_id is not null",
+            family_id,
+        )
+    return FamilyTree(
+        people=[Person(**r) for r in people],
+        relationships=[Relationship(**r) for r in edges],
+        me=me,
+        member_person_ids=[r["person_id"] for r in members],
+    )
 
 
 @router.post("/people", status_code=status.HTTP_201_CREATED)

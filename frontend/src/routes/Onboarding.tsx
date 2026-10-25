@@ -1,80 +1,106 @@
-import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
-import { BigButton, ScreenHeader } from '@/components/ui/Screen'
+import {
+  BackLink,
+  FormError,
+  PersonMark,
+  ScreenBody,
+  YellowButton,
+} from '@/components/ui/chrome'
+import { useScreenTitle } from '@/lib/useScreenTitle'
+import { AgeSlider, LanguageSelect } from '@/components/ui/fields'
+import { formatApiError } from '@/lib/apiError'
 import { api } from '@/lib/api'
-import { defaultModeForAge, useDisplayMode } from '@/lib/displayMode'
+import { useAuth } from '@/lib/auth'
+import { useDisplayMode } from '@/lib/displayMode'
+import { getPreferredLanguage, setPreferredLanguage, type LanguageId } from '@/lib/language'
+import { clearDisplayName, nameForProfile } from '@/lib/pendingProfile'
+import { profileKey, useProfile } from '@/lib/profile'
 
-/** Brief §5: age slider + numeric/plus-minus alt, Use simpler screens offer. */
 export function Onboarding() {
-  const { setAge, setMode } = useDisplayMode()
-  const [age, setAgeLocal] = useState(30)
-  const [simpler, setSimpler] = useState(false)
-  const [saving, setSaving] = useState(false)
+  useScreenTitle('make it yours')
   const navigate = useNavigate()
+  const { session, signOut } = useAuth()
+  const { adopt } = useDisplayMode()
+  const profile = useProfile()
+  const qc = useQueryClient()
+  const savedAge = typeof profile.data?.age === 'number' ? profile.data.age : null
+  const [draftAge, setDraftAge] = useState<number | null>(null)
+  const age = draftAge ?? savedAge ?? 24
+  const [language, setLanguage] = useState<LanguageId>(() => getPreferredLanguage())
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  async function save() {
-    setSaving(true)
-    const mode = simpler ? 'extra_simple' : defaultModeForAge(age)
-    try {
-      await api.PATCH('/api/profile', { body: { age, ui_mode: mode } })
-    } catch {
-      /* offline: local only */
+  async function finish(e: FormEvent) {
+    e.preventDefault()
+    if (!session) {
+      setError('create an account first.')
+      return
     }
-    setAge(age)
-    setMode(mode)
-    setSaving(false)
-    navigate('/')
+    setBusy(true)
+    setError(null)
+    setPreferredLanguage(language)
+    const displayName = nameForProfile(session.user.user_metadata, profile.data?.display_name)
+    const { data, error: apiError } = await api.PATCH('/api/profile', {
+      body: {
+        age,
+        ...(displayName ? { display_name: displayName } : {}),
+      },
+    })
+    setBusy(false)
+    if (apiError || !data) {
+      setError(formatApiError(apiError, 'we could not save that. try again.'))
+      return
+    }
+    clearDisplayName()
+    adopt({ age: data.age, ui_mode: data.ui_mode })
+    qc.setQueryData(profileKey(session.user.id), data)
+    navigate('/', { replace: true })
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-6 px-4">
-      <ScreenHeader title="About you" hideBack />
-      <p className="font-serif text-3xl">How old are you?</p>
-      <p className="text-muted">We use this to pick comfortable text sizes.</p>
-      <p className="font-serif text-5xl">{age}</p>
-      <input
-        type="range"
-        min={5}
-        max={100}
-        value={age}
-        onChange={(e) => setAgeLocal(Number(e.target.value))}
-        className="w-full"
-        aria-label="Age"
-      />
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => setAgeLocal(Math.max(5, age - 1))}
-          className="rounded-lg border border-ink/20 bg-white px-4 py-2"
-        >
-          −
-        </button>
-        <input
-          type="number"
-          min={5}
-          max={100}
-          value={age}
-          onChange={(e) => setAgeLocal(Number(e.target.value))}
-          className="flex-1 rounded-lg border border-ink/20 bg-white px-4 py-2"
-        />
-        <button
-          onClick={() => setAgeLocal(Math.min(100, age + 1))}
-          className="rounded-lg border border-ink/20 bg-white px-4 py-2"
-        >
-          +
-        </button>
+    <ScreenBody screen="onboarding" className="pt-6 pb-5">
+      <BackLink to="/sign-up" state={{ editing: true }} />
+      <h1 className="mt-4 font-hand text-5xl leading-none font-bold">make it yours</h1>
+      <div className="mt-4 flex justify-center">
+        <PersonMark />
       </div>
-      <label className="flex items-center gap-3 text-lg">
-        <input
-          type="checkbox"
-          checked={simpler}
-          onChange={(e) => setSimpler(e.target.checked)}
-          className="size-6"
+      <form onSubmit={finish} className="mt-6 flex flex-1 flex-col gap-6">
+        <AgeSlider
+          value={age}
+          onChange={setDraftAge}
         />
-        Use simpler screens
-      </label>
-      <BigButton onClick={save} disabled={saving} primary>
-        {saving ? 'Saving…' : 'Continue'}
-      </BigButton>
-    </main>
+        <LanguageSelect
+          value={language}
+          onChange={(next) => {
+            setLanguage(next)
+            setPreferredLanguage(next)
+          }}
+        />
+        <div className="mt-auto flex flex-col gap-3 pt-5">
+          <FormError>{error}</FormError>
+          <YellowButton type="submit" disabled={busy}>
+            {busy ? 'saving…' : 'finish →'}
+          </YellowButton>
+          <button
+            type="button"
+            className="font-hand text-[1.6rem] leading-none font-semibold"
+            onClick={async () => {
+              try {
+                await signOut()
+              } catch {
+                /* leave the screen either way */
+              }
+              clearDisplayName()
+              qc.clear()
+              navigate('/', { replace: true })
+            }}
+          >
+            sign out
+          </button>
+        </div>
+      </form>
+    </ScreenBody>
   )
 }

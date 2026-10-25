@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.auth import CurrentUser, family_of_heirloom, require_member
 from app.db import pool
+from app.routers.notifications import create_notification
 from app.storage import signed_download_url
 
 router = APIRouter(prefix="/api/requests", tags=["requests"])
@@ -42,23 +43,6 @@ class RequestDetail(StoryRequest):
     capture_url: str | None = None
     listener_name: str | None = None
     storyteller_name: str | None = None
-
-
-async def _notify(
-    conn: asyncpg.Connection,
-    recipient_id: UUID,
-    ntype: str,
-    request_id: UUID | None = None,
-    story_id: UUID | None = None,
-) -> None:
-    await conn.execute(
-        "insert into notification (recipient_id, type, request_id, story_id) "
-        "values ($1, $2, $3, $4)",
-        recipient_id,
-        ntype,
-        request_id,
-        story_id,
-    )
 
 
 async def _detail(conn: asyncpg.Connection, request_id: UUID) -> RequestDetail:
@@ -130,11 +114,28 @@ async def create_request(body: CreateRequest, user: CurrentUser) -> RequestDetai
             if not ok:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "capture not found")
         if body.idempotency_key:
-            existing = await conn.fetchval(
-                "select id from story_request where idempotency_key = $1", body.idempotency_key
+            existing = await conn.fetchrow(
+                "select id, heirloom_id, listener_id, storyteller_id from story_request "
+                "where idempotency_key = $1",
+                body.idempotency_key,
             )
             if existing:
-                return await _detail(conn, existing)
+                if (
+                    existing["heirloom_id"] != body.heirloom_id
+                    or existing["listener_id"] != listener_id
+                    or existing["storyteller_id"] != body.storyteller_id
+                ):
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT,
+                        "idempotency key was already used for another request",
+                    )
+                await create_notification(
+                    conn,
+                    ntype="request_received",
+                    recipient_id=existing["storyteller_id"],
+                    request_id=existing["id"],
+                )
+                return await _detail(conn, existing["id"])
         async with conn.transaction():
             row = await conn.fetchrow(
                 "insert into story_request "
@@ -148,7 +149,12 @@ async def create_request(body: CreateRequest, user: CurrentUser) -> RequestDetai
                 body.message or "",
                 body.idempotency_key,
             )
-            await _notify(conn, body.storyteller_id, "request_received", row["id"])
+            await create_notification(
+                conn,
+                ntype="request_received",
+                recipient_id=body.storyteller_id,
+                request_id=row["id"],
+            )
         return await _detail(conn, row["id"])
 
 
@@ -220,6 +226,19 @@ async def decline_request(request_id: UUID, user: CurrentUser) -> StoryRequest:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "request not found")
         me = await require_member(conn, user, await family_of_heirloom(conn, r["heirloom_id"]))
         _check_actor(r["listener_id"], r["storyteller_id"], me, "storyteller")
+        if r["status"] == "declined":
+            await create_notification(
+                conn,
+                ntype="request_declined",
+                recipient_id=r["listener_id"],
+                request_id=request_id,
+            )
+            row = await conn.fetchrow(
+                "select id, heirloom_id, capture_media_id, listener_id, storyteller_id, "
+                "message, status, created_at::text from story_request where id = $1",
+                request_id,
+            )
+            return StoryRequest(**dict(row, message=row["message"] or ""))
         if r["status"] not in ("pending", "in_progress"):
             raise HTTPException(status.HTTP_409_CONFLICT, f"request is {r['status']}")
         async with conn.transaction():
@@ -229,7 +248,12 @@ async def decline_request(request_id: UUID, user: CurrentUser) -> StoryRequest:
                 "status, created_at::text",
                 request_id,
             )
-            await _notify(conn, r["listener_id"], "request_declined", request_id)
+            await create_notification(
+                conn,
+                ntype="request_declined",
+                recipient_id=r["listener_id"],
+                request_id=request_id,
+            )
     return StoryRequest(**dict(row, message=row["message"] or ""))
 
 

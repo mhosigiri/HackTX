@@ -51,7 +51,7 @@ async def visible(conn, user_id: UUID, sql: str) -> int:
     return n
 
 
-async def test_profiles_are_visible_to_self_and_family_only(conn, seed):
+async def test_profile_preferences_are_visible_to_self_only(conn, seed):
     relative, outsider = uuid4(), uuid4()
     await add_person(conn, seed.family_id, "Raj", relative)
     other_family = await conn.fetchval(
@@ -62,15 +62,25 @@ async def test_profiles_are_visible_to_self_and_family_only(conn, seed):
 
     mine = "select count(*) from profile where age = 84"
     assert await visible(conn, seed.user_id, mine) == 1
-    assert await visible(conn, relative, mine) == 1, "family sees display names for cards"
-    assert await visible(conn, outsider, mine) == 0, "a stranger never sees an elder's age"
+    assert await visible(conn, relative, mine) == 0, "family sees names through person, not prefs"
+    assert await visible(conn, outsider, mine) == 0
 
 
 async def test_notifications_are_visible_only_to_their_recipient(conn, seed):
     relative = uuid4()
     raj = await add_person(conn, seed.family_id, "Raj", relative)
+    request_id = await conn.fetchval(
+        "insert into story_request (heirloom_id, listener_id, storyteller_id) "
+        "values ($1, $2, $3) returning id",
+        seed.heirloom_id,
+        seed.narrator_id,
+        raj,
+    )
     await conn.execute(
-        "insert into notification (recipient_id, type) values ($1, 'request_received')", raj
+        "insert into notification (recipient_id, type, request_id) "
+        "values ($1, 'request_received', $2)",
+        raj,
+        request_id,
     )
 
     inbox = "select count(*) from notification"

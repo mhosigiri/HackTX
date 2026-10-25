@@ -9,14 +9,18 @@ from app.config import get_settings
 from app.jobs.runner import run_worker
 from app.routers import (
     answer_stream,
+    availability,
+    events,
     families,
     heirlooms,
     interviews,
+    invites,
     memories,
     notifications,
     profiles,
     requests,
     stories,
+    timeline,
 )
 
 log = logging.getLogger("lorebook")
@@ -47,14 +51,18 @@ app = FastAPI(title="Lorebook API", lifespan=lifespan)
 
 for r in (
     families,
+    availability,
+    events,
     heirlooms,
     interviews,
     answer_stream,
     memories,
     stories,
+    timeline,
     requests,
     notifications,
     profiles,
+    invites,
 ):
     app.include_router(r.router)
 

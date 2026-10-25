@@ -54,7 +54,7 @@ function CreateFamily() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-3 px-4">
-      <h1 className="font-serif text-3xl">Start your family's Lorebook</h1>
+      <h1 className="font-serif text-5xl">start your family</h1>
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}

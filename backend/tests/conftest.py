@@ -97,6 +97,7 @@ class Fakes:
     search: FakeSearch
     image: FakeImage
     files: dict[str, bytes]
+    file_mimes: dict[str, str]
 
 
 @pytest.fixture
@@ -108,6 +109,7 @@ async def fakes(monkeypatch) -> Fakes:
         search=FakeSearch(),
         image=FakeImage(),
         files={},
+        file_mimes={},
     )
     monkeypatch.setattr(
         providers,
@@ -128,12 +130,30 @@ async def fakes(monkeypatch) -> Fakes:
     async def signed_download_url(bucket, path, expires_in=3600):
         return f"https://storage.test/{bucket}/{path}"
 
+    async def signed_upload_url(bucket, path):
+        return f"https://upload.test/{bucket}/{path}"
+
+    async def object_info(bucket, path):
+        data = f.files.get(path)
+        if data is None:
+            return None
+        return storage.StoredObject(byte_size=len(data), mime=f.file_mimes[path])
+
+    async def delete_objects(bucket, paths):
+        for path in paths:
+            f.files.pop(path, None)
+            f.file_mimes.pop(path, None)
+
     async def upload(bucket, path, data, mime):
         f.files[path] = data
+        f.file_mimes[path] = mime
 
     monkeypatch.setattr(storage, "download", download)
     monkeypatch.setattr(storage, "upload", upload)
     monkeypatch.setattr(storage, "signed_download_url", signed_download_url)
+    monkeypatch.setattr(storage, "signed_upload_url", signed_upload_url)
+    monkeypatch.setattr(storage, "object_info", object_info)
+    monkeypatch.setattr(storage, "delete_objects", delete_objects)
     return f
 
 

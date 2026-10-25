@@ -1,10 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState, createContext, type ReactNode } from 'react'
 import { api } from '@/lib/api'
-import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth'
+import { supabaseConfigured } from '@/lib/supabase'
 
 export type DisplayMode = 'regular' | 'simplified' | 'extra_simple'
 
 const KEY = 'tmm-ui-mode'
+
+export function isDisplayMode(value: string | null | undefined): value is DisplayMode {
+  return value === 'regular' || value === 'simplified' || value === 'extra_simple'
+}
 
 export function defaultModeForAge(age: number | null | undefined): DisplayMode {
   if (age == null) return 'simplified'
@@ -13,52 +18,76 @@ export function defaultModeForAge(age: number | null | undefined): DisplayMode {
   return 'extra_simple'
 }
 
+type ProfilePatch = { age?: number | null; ui_mode?: string | null }
+
 const Ctx = createContext<{
   mode: DisplayMode
   age: number | null
   setMode: (m: DisplayMode) => void
   setAge: (a: number | null) => void
-}>({ mode: 'simplified', age: null, setMode: () => {}, setAge: () => {} })
+  adopt: (next: ProfilePatch) => void
+}>({
+  mode: 'simplified',
+  age: null,
+  setMode: () => {},
+  setAge: () => {},
+  adopt: () => {},
+})
 
-export function DisplayModeProvider({ children }: { children: React.ReactNode }) {
+export function DisplayModeProvider({ children }: { children: ReactNode }) {
+  const { ready, session } = useAuth()
+  const userId = session?.user.id
+  const gen = useRef(0)
   const [mode, setModeState] = useState<DisplayMode>(() => {
     const saved = localStorage.getItem(KEY)
     return saved === 'regular' || saved === 'extra_simple' ? saved : 'simplified'
   })
-  const [age, setAgeState] = useState<number | null>(null)
+  const [storedAge, setStoredAge] = useState<{ userId: string; age: number | null } | null>(null)
+  const age = storedAge && storedAge.userId === userId ? storedAge.age : null
 
   useEffect(() => {
-    supabase.auth
-      .getSession()
+    if (!ready || !userId || !supabaseConfigured) return
+    const id = ++gen.current
+    api
+      .GET('/api/profile')
       .then(({ data }) => {
-        if (!data.session) return
-        return api.GET('/api/profile').then(({ data: p }) => {
-          if (p?.ui_mode) {
-            setModeState(p.ui_mode as DisplayMode)
-            localStorage.setItem(KEY, p.ui_mode)
-          }
-          if (typeof p?.age === 'number') setAgeState(p.age)
-        })
+        if (id !== gen.current || !data) return
+        if (typeof data.age === 'number') setStoredAge({ userId, age: data.age })
+        if (isDisplayMode(data.ui_mode)) {
+          setModeState(data.ui_mode)
+          localStorage.setItem(KEY, data.ui_mode)
+        }
       })
       .catch(() => {})
-  }, [])
+  }, [ready, userId])
 
   const setMode = useCallback((m: DisplayMode) => {
+    gen.current += 1
     setModeState(m)
     localStorage.setItem(KEY, m)
     api.PATCH('/api/profile', { body: { ui_mode: m } }).catch(() => {})
   }, [])
 
   const setAge = useCallback((a: number | null) => {
-    setAgeState(a)
+    gen.current += 1
+    if (userId) setStoredAge({ userId, age: a })
     if (a != null) {
-      const m = defaultModeForAge(a)
-      setModeState(m)
-      localStorage.setItem(KEY, m)
+      const next = defaultModeForAge(a)
+      setModeState(next)
+      localStorage.setItem(KEY, next)
     }
-  }, [])
+  }, [userId])
 
-  return <Ctx.Provider value={{ mode, age, setMode, setAge }}>{children}</Ctx.Provider>
+  const adopt = useCallback((next: ProfilePatch) => {
+    gen.current += 1
+    if (typeof next.age === 'number' && userId) setStoredAge({ userId, age: next.age })
+    if (isDisplayMode(next.ui_mode)) {
+      setModeState(next.ui_mode)
+      localStorage.setItem(KEY, next.ui_mode)
+    }
+  }, [userId])
+
+  return <Ctx.Provider value={{ mode, age, setMode, setAge, adopt }}>{children}</Ctx.Provider>
 }
 
 export function useDisplayMode() {

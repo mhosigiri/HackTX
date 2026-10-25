@@ -16,14 +16,15 @@ export function ScreenHeader({
     <header className="mb-4 flex items-center gap-3">
       {!hideBack && (
         <button
+          type="button"
           onClick={() => navigate(-1)}
-          className="rounded-lg border border-ink/20 bg-white px-3 py-2 text-sm"
+          className="rounded-full border-2 border-ink bg-paper px-3 py-2 font-hand text-lg leading-none"
         >
-          Back
+          back
         </button>
       )}
-      <Link to="/" className="rounded-lg border border-ink/20 bg-white px-3 py-2 text-sm">
-        Home
+      <Link to="/" className="rounded-full border-2 border-ink bg-paper px-3 py-2 font-hand text-lg leading-none">
+        home
       </Link>
       <h1 className={cn('font-serif', mode === 'extra_simple' ? 'text-3xl' : 'text-xl')}>
         {title}
@@ -47,10 +48,10 @@ export function BigButton({
 }) {
   const { mode } = useDisplayMode()
   const cls = cn(
-    'block w-full rounded-xl px-6 text-center',
-    mode === 'extra_simple' ? 'py-5 text-xl' : 'py-4 text-lg',
-    primary ? 'bg-ink text-paper' : 'border border-ink/20 bg-white',
-    disabled && 'opacity-40',
+    'block w-full rounded-full border-2 border-ink px-6 text-center font-hand leading-none font-bold',
+    mode === 'extra_simple' ? 'py-5 text-[1.7rem]' : 'py-4 text-[1.45rem]',
+    primary ? 'bg-sun text-black' : 'bg-paper text-ink',
+    disabled && 'pointer-events-none opacity-40',
   )
   if (to && !disabled) {
     return (
@@ -60,7 +61,7 @@ export function BigButton({
     )
   }
   return (
-    <button onClick={onClick} disabled={disabled} className={cls}>
+    <button type="button" onClick={onClick} disabled={disabled} className={cls}>
       {children}
     </button>
   )
